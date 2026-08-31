@@ -97,3 +97,41 @@ def test_does_not_rewrite_unmanaged_unknown_or_comments():
     )
     before, _, _ = result.partition("# BEGIN Hosts Manager")
     assert before == original
+
+
+def test_allows_dual_stack_hostname_across_families():
+    profiles = [
+        _dev(HostEntry(ip="127.0.0.1", hostname="findeep.local")),
+        _staging(HostEntry(ip="::1", hostname="findeep.local")),
+    ]
+    result = merge_profiles(parse(""), profiles)
+    assert "127.0.0.1 findeep.local" in result
+    assert "::1 findeep.local" in result
+
+
+def test_still_rejects_same_family_duplicates():
+    profiles = [
+        _dev(HostEntry(ip="127.0.0.1", hostname="findeep.local")),
+        _staging(HostEntry(ip="10.0.0.1", hostname="findeep.local")),
+    ]
+    with pytest.raises(MergeConflict):
+        merge_profiles(parse(""), profiles)
+
+
+def test_rejects_third_entry_for_hostname():
+    profiles = [
+        _dev(HostEntry(ip="127.0.0.1", hostname="findeep.local")),
+        _staging(HostEntry(ip="::1", hostname="findeep.local")),
+        _staging(HostEntry(ip="10.0.0.1", hostname="findeep.local")),
+    ]
+    with pytest.raises(MergeConflict):
+        merge_profiles(parse(""), profiles)
+
+
+def test_disabled_profile_does_not_conflict_on_family():
+    profiles = [
+        _dev(HostEntry(ip="127.0.0.1", hostname="findeep.local")),
+        _staging(HostEntry(ip="10.0.0.1", hostname="findeep.local"), enabled=False),
+    ]
+    result = merge_profiles(parse(""), profiles)
+    assert "127.0.0.1 findeep.local" in result

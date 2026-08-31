@@ -12,7 +12,7 @@ from hosts_manager.models import (
     Profile,
 )
 from hosts_manager.parser import format_entry_line, serialize
-from hosts_manager.validate import validate_entry
+from hosts_manager.validate import ip_family, validate_entry
 
 
 class MergeConflict(Exception):
@@ -81,8 +81,14 @@ def _validate_entries(entries: list[HostEntry]) -> None:
 
 
 def _raise_if_duplicate_hostnames(entries: list[HostEntry]) -> None:
-    counts = Counter(entry.hostname.lower() for entry in entries)
-    dupes = sorted(name for name, count in counts.items() if count > 1)
+    name_counts = Counter(entry.hostname.lower() for entry in entries)
+    family_counts = Counter(
+        (entry.hostname.lower(), ip_family(entry.ip)) for entry in entries
+    )
+    dupes = sorted(
+        {name for name, count in name_counts.items() if count > 2}
+        | {name for (name, _family), count in family_counts.items() if count > 1}
+    )
     if dupes:
         raise MergeConflict(dupes, f"Duplicate hostname(s) in enabled profiles: {', '.join(dupes)}")
 
