@@ -1302,12 +1302,6 @@ class HostsManagerWindow(Adw.ApplicationWindow):
             "Organisation",
             ["Deepvelop"],
         )
-        about.add_legal_section(
-            "License",
-            "",
-            Gtk.License.APACHE_2_0,
-            "",
-        )
         about.present(self)
 
     def _present_alert(self, dialog: Adw.AlertDialog, on_response) -> None:
