@@ -1293,14 +1293,10 @@ class HostsManagerWindow(Adw.ApplicationWindow):
             issue_url="https://github.com/deepvelop/linux-hosts-manager/issues",
             license_type=Gtk.License.APACHE_2_0,
         )
-        about.add_link("Website", "https://deepvelop.nl/")
         about.add_link("GitHub", "https://github.com/deepvelop/linux-hosts-manager")
         about.add_credit_section(
-            "Deepvelop",
-            [
-                "https://deepvelop.nl/",
-                "https://github.com/deepvelop/linux-hosts-manager",
-            ],
+            "Developers",
+            ["Deepvelop"],
         )
         about.add_legal_section(
             "License",
