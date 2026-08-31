@@ -356,9 +356,43 @@ button.apply-button:disabled {
   opacity: 0.75;
 }
 
-.diff-remove {
-  color: #f85149;
+.diff-row {
+  border-radius: 8px;
+  padding: 3px 10px;
+}
+
+.diff-row-add {
+  background-color: alpha(@success_color, 0.16);
+}
+
+.diff-row-remove {
+  background-color: alpha(@destructive_color, 0.16);
+}
+
+.diff-row-change {
+  background-color: alpha(@accent_bg_color, 0.16);
+}
+
+.diff-marker {
   font-family: monospace;
+  font-weight: 700;
+}
+
+.diff-marker-add {
+  color: @success_color;
+}
+
+.diff-marker-remove {
+  color: @destructive_color;
+}
+
+.diff-marker-change {
+  color: @accent_color;
+}
+
+.diff-content {
+  font-family: monospace;
+  font-size: 0.95em;
 }
 
 .import-raw {
