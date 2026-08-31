@@ -77,8 +77,14 @@ def replan_with_edits(
         if line.lineno in plan.delete_lines:
             continue
         if line.lineno in edited_raws:
-            reparsed = parse(edited_raws[line.lineno]).lines[0]
-            reparsed.lineno = line.lineno
+            parsed_lines = parse(edited_raws[line.lineno]).lines
+            if len(parsed_lines) > 1:
+                raise ValueError("Edited line must contain at most one line")
+            if parsed_lines:
+                reparsed = parsed_lines[0]
+                reparsed.lineno = line.lineno
+            else:
+                reparsed = HostsLine(kind=LineKind.BLANK, raw="", lineno=line.lineno)
             lines.append(reparsed)
         else:
             lines.append(line)

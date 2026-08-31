@@ -173,3 +173,21 @@ def test_replan_respects_deleted_lines():
     assert [e.hostname for e in new_plan.entries] == ["app.local"]
     assert new_plan.problems == []
     assert new_plan.delete_lines == {1}
+
+
+def test_replan_empty_edit_turns_line_blank_and_keeps_it():
+    original = parse("garbage here\n127.0.0.1 app.local\n")
+    plan = plan_import(original, [])
+    new_plan = replan_with_edits(original, plan, {1: ""}, [])
+    assert [e.hostname for e in new_plan.entries] == ["app.local"]
+    assert new_plan.problems == []
+    assert new_plan.keep_lines == {1}
+
+
+def test_replan_rejects_multi_line_edit():
+    original = parse("garbage here\n127.0.0.1 app.local\n")
+    plan = plan_import(original, [])
+    with pytest.raises(ValueError, match="at most one line"):
+        replan_with_edits(
+            original, plan, {1: "127.0.0.1 first.local\n10.0.0.1 second.local"}, []
+        )
