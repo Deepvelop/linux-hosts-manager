@@ -194,7 +194,7 @@ class ImportDialog(Adw.Dialog):
 
         hint = Gtk.Label(
             label="Expected shape: IP hostname [# description]. "
-            "A line starting with # is kept in the hosts file as a comment."
+            "A line starting with # and a valid entry behind it is imported as a disabled entry."
         )
         hint.set_wrap(True)
         hint.set_xalign(0)
@@ -231,7 +231,7 @@ class ImportDialog(Adw.Dialog):
             text = buffer.get_text(
                 buffer.get_start_iter(), buffer.get_end_iter(), False
             ).strip()
-            if "\n" in text:
+            if "\n" in text or "\r" in text:
                 error.set_text("Edit a single line only.")
                 error.set_visible(True)
                 return

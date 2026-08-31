@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from hosts_manager.merge import merge_profiles, split_managed
 from hosts_manager.models import HostEntry, HostsDocument, HostsLine, LineKind, Profile
@@ -139,7 +139,7 @@ def build_imported_text(
         lines=cleaned_lines,
         trailing_newline=document.trailing_newline,
     )
-    target_profiles = list(profiles)
+    target_profiles = [replace(p, entries=list(p.entries)) for p in profiles]
     ensure_import_profile(target_profiles, plan.entries)
     return merge_profiles(cleaned, target_profiles)
 

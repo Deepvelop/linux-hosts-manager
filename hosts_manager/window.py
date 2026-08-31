@@ -1150,20 +1150,28 @@ class HostsManagerWindow(Adw.ApplicationWindow):
             return
         self._apply_import(final_plan)
 
-    def _apply_import(self, plan: ImportPlan) -> None:
-        document = self._import_document
-        if document is None or self._import_digest is None:
-            return
+    def _verify_unchanged(self) -> bool:
+        """Return True when the hosts file still matches the import snapshot."""
+        if self._import_digest is None:
+            return False
         path = hosts_path_from_env()
         try:
             current = path.read_text(encoding="utf-8")
         except OSError as exc:
             self._alert("Cannot read hosts file", str(exc))
-            return
+            return False
         digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
         if digest != self._import_digest:
             self.toast_overlay.add_toast(Adw.Toast(title="Hosts file changed during import"))
             self._maybe_present_import(force=True)
+            return False
+        return True
+
+    def _apply_import(self, plan: ImportPlan) -> None:
+        document = self._import_document
+        if document is None or self._import_digest is None:
+            return
+        if not self._verify_unchanged():
             return
         try:
             new_text = build_imported_text(document, plan, self.profiles)
@@ -1174,11 +1182,12 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         if not changes and not plan.delete_lines:
             self.toast_overlay.add_toast(Adw.Toast(title="Nothing to import"))
             return
-        body = (
-            format_diff_text(changes)
-            if changes
-            else f"Removes {len(plan.delete_lines)} unparsable line(s) from the hosts file."
-        )
+        if changes:
+            body = format_diff_text(changes)
+            if plan.delete_lines:
+                body += f"\nRemoves {len(plan.delete_lines)} unparsable line(s) from the hosts file."
+        else:
+            body = f"Removes {len(plan.delete_lines)} unparsable line(s) from the hosts file."
         dialog = Adw.AlertDialog(heading="Import changes", body=body)
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("apply", "Save")
@@ -1188,6 +1197,8 @@ class HostsManagerWindow(Adw.ApplicationWindow):
 
         def on_response(response: str) -> None:
             if response != "apply":
+                return
+            if not self._verify_unchanged():
                 return
             if self._do_write_hosts(new_text, "Imported existing hosts"):
                 self._finish_import(plan)

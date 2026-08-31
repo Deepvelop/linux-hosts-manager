@@ -2,7 +2,6 @@ import pytest
 
 from hosts_manager.importer import (
     IMPORT_PROFILE_ID,
-    ImportPlan,
     build_imported_text,
     ensure_import_profile,
     plan_import,
@@ -75,6 +74,16 @@ def test_plan_flags_duplicate_hostname_on_later_line():
     assert len(plan.problems) == 1
     assert plan.problems[0].lineno == 2
     assert plan.problems[0].fault == "Duplicate hostname 'app.local' (also on line 1)"
+
+
+def test_plan_flags_within_line_duplicate_hostname():
+    doc = parse("127.0.0.1 foo foo\n")
+    plan = plan_import(doc, [])
+    assert plan.entries == []
+    assert plan.source_lines == set()
+    assert len(plan.problems) == 1
+    assert plan.problems[0].lineno == 1
+    assert plan.problems[0].fault == "Duplicate hostname 'foo' (also on line 1)"
 
 
 def test_plan_flags_clash_with_enabled_profile():
@@ -164,6 +173,18 @@ def test_replan_marks_comment_edits_as_kept():
     assert new_plan.keep_lines == {1}
 
 
+def test_replan_edited_still_broken_stays_problem():
+    original = parse("garbage here\n127.0.0.1 app.local\n")
+    plan = plan_import(original, [])
+    new_plan = replan_with_edits(original, plan, {1: "still garbage"}, [])
+    assert [e.hostname for e in new_plan.entries] == ["app.local"]
+    assert len(new_plan.problems) == 1
+    assert new_plan.problems[0].lineno == 1
+    assert new_plan.problems[0].raw == "still garbage"
+    assert new_plan.keep_lines == set()
+    assert 1 not in new_plan.source_lines
+
+
 def test_replan_respects_deleted_lines():
     original = parse("garbage here\n127.0.0.1 app.local\n")
     plan = plan_import(original, [])
@@ -213,3 +234,37 @@ def test_replan_edited_raws_survives_second_replan():
     assert "garbage here" not in result
     assert "127.0.0.1 fixed.local" in result
     assert second.edited_raws == {1: "# just a note", 2: "127.0.0.1 fixed.local"}
+
+
+def _existing_hosts_profile(*hostnames: str) -> Profile:
+    return Profile(
+        id=IMPORT_PROFILE_ID,
+        name="Existing hosts",
+        icon="home",
+        enabled=True,
+        entries=[HostEntry(ip="10.0.0.1", hostname=name) for name in hostnames],
+    )
+
+
+def test_build_imported_text_does_not_mutate_profiles():
+    profiles = [
+        _existing_hosts_profile("old.local"),
+        _profiles(HostEntry(ip="10.0.0.2", hostname="dev.local"))[0],
+    ]
+    doc = parse("127.0.0.1 fresh.local\n")
+    plan = plan_import(doc, profiles)
+    build_imported_text(doc, plan, profiles)
+    import_profile = next(p for p in profiles if p.id == IMPORT_PROFILE_ID)
+    assert [e.hostname for e in import_profile.entries] == ["old.local"]
+    assert [e.hostname for e in profiles[1].entries] == ["dev.local"]
+    assert len(profiles) == 2
+
+
+def test_window_flow_appends_each_entry_exactly_once():
+    profiles = [_existing_hosts_profile("old.local")]
+    doc = parse("127.0.0.1 fresh.local\n")
+    plan = plan_import(doc, profiles)
+    build_imported_text(doc, plan, profiles)  # window._apply_import
+    ensure_import_profile(profiles, plan.entries)  # window._finish_import
+    import_profile = next(p for p in profiles if p.id == IMPORT_PROFILE_ID)
+    assert [e.hostname for e in import_profile.entries] == ["old.local", "fresh.local"]
