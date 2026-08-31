@@ -59,12 +59,18 @@ def unmanaged_hostnames(document: HostsDocument) -> set[str]:
     return names
 
 
-def managed_entries(document: HostsDocument) -> list[tuple[str, str, bool]]:
+def managed_entries(document: HostsDocument) -> dict[tuple[str, str], tuple[str, str, bool]]:
+    """Map (hostname, ip-family) -> (ip, hostname, enabled) for managed-block entries."""
     _, managed, _ = split_managed(document)
-    entries: list[tuple[str, str, bool]] = []
+    entries: dict[tuple[str, str], tuple[str, str, bool]] = {}
     for line in managed:
         if line.kind in (LineKind.ENTRY, LineKind.DISABLED_ENTRY) and line.hostnames:
-            entries.append((line.ip, line.hostnames[0], line.enabled))
+            hostname = line.hostnames[0]
+            entries[(hostname.lower(), ip_family(line.ip))] = (
+                line.ip,
+                hostname,
+                line.enabled,
+            )
     return entries
 
 

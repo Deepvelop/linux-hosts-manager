@@ -31,14 +31,8 @@ def format_diff_text(changes: list[DiffChange]) -> str:
 
 
 def managed_diff(old_document: HostsDocument, new_text: str) -> list[DiffChange]:
-    old_map = {
-        hostname.lower(): (ip, hostname, enabled)
-        for ip, hostname, enabled in managed_entries(old_document)
-    }
-    new_map = {
-        hostname.lower(): (ip, hostname, enabled)
-        for ip, hostname, enabled in managed_entries(parse(new_text))
-    }
+    old_map = managed_entries(old_document)
+    new_map = managed_entries(parse(new_text))
 
     changes: list[DiffChange] = []
     for key in sorted(set(old_map) | set(new_map)):

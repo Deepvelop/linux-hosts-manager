@@ -65,3 +65,32 @@ def test_format_diff_text_includes_enable_disable():
         == "~ 127.0.0.1 app.local (disabled)\n~ 10.0.0.1 api.local (enabled)"
     )
 
+
+def test_diff_keeps_both_families_of_dual_hostname():
+    old = parse(
+        "# BEGIN Hosts Manager\n127.0.0.1 findeep.local\n::1 findeep.local\n# END Hosts Manager\n"
+    )
+    new_text = (
+        "# BEGIN Hosts Manager\n# 127.0.0.1 findeep.local\n::1 findeep.local\n# END Hosts Manager\n"
+    )
+    changes = managed_diff(old, new_text)
+    assert changes == [DiffChange(kind="disable", ip="127.0.0.1", hostname="findeep.local")]
+
+
+def test_diff_adds_second_family_independently():
+    old = parse("# BEGIN Hosts Manager\n127.0.0.1 findeep.local\n# END Hosts Manager\n")
+    new_text = (
+        "# BEGIN Hosts Manager\n127.0.0.1 findeep.local\n::1 findeep.local\n# END Hosts Manager\n"
+    )
+    changes = managed_diff(old, new_text)
+    assert changes == [DiffChange(kind="add", ip="::1", hostname="findeep.local")]
+
+
+def test_diff_removes_one_family_only():
+    old = parse(
+        "# BEGIN Hosts Manager\n127.0.0.1 findeep.local\n::1 findeep.local\n# END Hosts Manager\n"
+    )
+    new_text = "# BEGIN Hosts Manager\n127.0.0.1 findeep.local\n# END Hosts Manager\n"
+    changes = managed_diff(old, new_text)
+    assert changes == [DiffChange(kind="remove", ip="::1", hostname="findeep.local")]
+
