@@ -191,3 +191,25 @@ def test_replan_rejects_multi_line_edit():
         replan_with_edits(
             original, plan, {1: "127.0.0.1 first.local\n10.0.0.1 second.local"}, []
         )
+
+
+def test_build_imported_text_applies_kept_line_edits():
+    doc = parse("garbage here\n127.0.0.1 app.local\n")
+    plan = plan_import(doc, [])
+    new_plan = replan_with_edits(doc, plan, {1: "# just a note"}, [])
+    result = build_imported_text(doc, new_plan, [])
+    assert "# just a note" in result
+    assert "garbage here" not in result
+    assert "# just a note" in result.split("# BEGIN Hosts Manager", 1)[0]
+
+
+def test_replan_edited_raws_survives_second_replan():
+    doc = parse("garbage here\n127.0.0.1 app.local\n10.0.0.1 other.local\n")
+    plan = plan_import(doc, [])
+    first = replan_with_edits(doc, plan, {1: "# just a note"}, [])
+    second = replan_with_edits(doc, first, {2: "127.0.0.1 fixed.local"}, [])
+    result = build_imported_text(doc, second, [])
+    assert "# just a note" in result
+    assert "garbage here" not in result
+    assert "127.0.0.1 fixed.local" in result
+    assert second.edited_raws == {1: "# just a note", 2: "127.0.0.1 fixed.local"}

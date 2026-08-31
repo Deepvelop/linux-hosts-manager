@@ -27,6 +27,7 @@ class ImportPlan:
     source_lines: set[int] = field(default_factory=set)
     delete_lines: set[int] = field(default_factory=set)
     keep_lines: set[int] = field(default_factory=set)
+    edited_raws: dict[int, str] = field(default_factory=dict)
 
 
 def plan_import(document: HostsDocument, profiles: list[Profile]) -> ImportPlan:
@@ -72,29 +73,23 @@ def replan_with_edits(
     Lines the user removed (plan.delete_lines) are dropped from the scan;
     edited raw text replaces the original line content.
     """
+    all_edits = {**plan.edited_raws, **edited_raws}
     lines: list[HostsLine] = []
     for line in original.lines:
         if line.lineno in plan.delete_lines:
             continue
-        if line.lineno in edited_raws:
-            parsed_lines = parse(edited_raws[line.lineno]).lines
-            if len(parsed_lines) > 1:
-                raise ValueError("Edited line must contain at most one line")
-            if parsed_lines:
-                reparsed = parsed_lines[0]
-                reparsed.lineno = line.lineno
-            else:
-                reparsed = HostsLine(kind=LineKind.BLANK, raw="", lineno=line.lineno)
-            lines.append(reparsed)
+        if line.lineno in all_edits:
+            lines.append(_substituted_line(all_edits[line.lineno], line.lineno))
         else:
             lines.append(line)
     new_plan = plan_import(
         HostsDocument(lines=lines, trailing_newline=original.trailing_newline),
         profiles,
     )
+    new_plan.edited_raws = all_edits
     new_plan.delete_lines = set(plan.delete_lines)
     new_plan.keep_lines = set(plan.keep_lines)
-    for lineno in edited_raws:
+    for lineno in all_edits:
         if lineno in new_plan.source_lines:
             continue
         if any(problem.lineno == lineno for problem in new_plan.problems):
@@ -130,8 +125,18 @@ def build_imported_text(
     if plan.problems:
         raise ValueError("Cannot import: unresolved problem lines remain")
     drop = plan.source_lines | plan.delete_lines
+    cleaned_lines: list[HostsLine] = []
+    for line in document.lines:
+        if line.lineno in drop:
+            continue
+        if line.lineno in plan.edited_raws:
+            cleaned_lines.append(
+                _substituted_line(plan.edited_raws[line.lineno], line.lineno)
+            )
+        else:
+            cleaned_lines.append(line)
     cleaned = HostsDocument(
-        lines=[line for line in document.lines if line.lineno not in drop],
+        lines=cleaned_lines,
         trailing_newline=document.trailing_newline,
     )
     target_profiles = list(profiles)
@@ -170,3 +175,15 @@ def _add_line(
 
 def _fail_line(plan: ImportPlan, line: HostsLine, fault: str) -> None:
     plan.problems.append(ImportProblem(lineno=line.lineno, raw=line.raw, fault=fault))
+
+
+def _substituted_line(raw: str, lineno: int) -> HostsLine:
+    """Parse an edited raw line into a single HostsLine, preserving lineno."""
+    parsed_lines = parse(raw).lines
+    if len(parsed_lines) > 1:
+        raise ValueError("Edited line must contain at most one line")
+    if parsed_lines:
+        line = parsed_lines[0]
+        line.lineno = lineno
+        return line
+    return HostsLine(kind=LineKind.BLANK, raw="", lineno=lineno)
