@@ -5,9 +5,8 @@ from __future__ import annotations
 import gi
 
 gi.require_version("Gtk", "4.0")
-gi.require_version("Pango", "1.0")
 
-from gi.repository import Gtk, Pango
+from gi.repository import Gtk
 
 from hosts_manager.diff import DiffChange
 from hosts_manager.sync import SyncChange
@@ -64,13 +63,14 @@ def build_diff_box(rows: list[tuple[str, str]], note: str = "") -> Gtk.Widget:
         content.add_css_class("diff-content")
         content.set_xalign(0)
         content.set_hexpand(True)
-        content.set_ellipsize(Pango.EllipsizeMode.END)
+        content.set_ellipsize(Pango.EllipsizeMode.NONE)
         row.append(mark)
         row.append(content)
         box.append(row)
     scrolled = Gtk.ScrolledWindow()
-    scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-    scrolled.set_max_content_height(300)
+    scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+    scrolled.set_min_content_width(560)
+    scrolled.set_max_content_height(420)
     scrolled.set_vexpand(True)
     scrolled.set_child(box)
     container.append(scrolled)
