@@ -86,20 +86,19 @@ def test_plan_flags_within_line_duplicate_hostname():
     assert plan.problems[0].fault == "Duplicate hostname 'foo' (also on line 1)"
 
 
-def test_plan_flags_clash_with_enabled_profile():
+def test_plan_skips_adopted_line_from_enabled_profile():
     doc = parse("127.0.0.1 app.local\n")
     plan = plan_import(doc, _profiles(HostEntry(ip="127.0.0.1", hostname="app.local")))
     assert plan.entries == []
-    assert len(plan.problems) == 1
-    assert plan.problems[0].fault == "Hostname 'app.local' already in profile 'Development'"
+    assert plan.problems == []
 
 
-def test_plan_ignores_disabled_profiles_for_clash():
+def test_plan_skips_adopted_line_from_disabled_profile():
     doc = parse("127.0.0.1 app.local\n")
     profiles = _profiles(HostEntry(ip="127.0.0.1", hostname="app.local"), enabled=False)
     plan = plan_import(doc, profiles)
+    assert plan.entries == []
     assert plan.problems == []
-    assert [e.hostname for e in plan.entries] == ["app.local"]
 
 
 def test_ensure_import_profile_creates_once_and_appends():
@@ -302,3 +301,25 @@ def test_plan_flags_third_occurrence_of_hostname():
     assert len(plan.problems) == 1
     assert plan.problems[0].lineno == 3
     assert plan.problems[0].fault == "Duplicate hostname 'findeep.local' (also on line 1)"
+
+
+def test_plan_still_offers_foreign_lines():
+    doc = parse("10.0.0.1 stranger.local\n")
+    plan = plan_import(doc, [])
+    assert [e.hostname for e in plan.entries] == ["stranger.local"]
+    assert plan.problems == []
+
+
+def test_plan_offers_different_family_twin():
+    doc = parse("::1 app.local\n")
+    plan = plan_import(doc, _profiles(HostEntry(ip="127.0.0.1", hostname="app.local")))
+    assert [e.hostname for e in plan.entries] == ["app.local"]
+    assert plan.problems == []
+
+
+def test_plan_skips_line_with_any_adopted_hostname():
+    doc = parse("::1 ip6-localhost newthing.local\n")
+    profiles = _profiles(HostEntry(ip="::1", hostname="ip6-localhost"))
+    plan = plan_import(doc, profiles)
+    assert plan.entries == []
+    assert plan.problems == []

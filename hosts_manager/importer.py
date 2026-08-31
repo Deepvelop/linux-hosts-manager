@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from hosts_manager.merge import merge_profiles, split_managed
+from hosts_manager.merge import adopted_map, merge_profiles, split_managed
 from hosts_manager.models import HostEntry, HostsDocument, HostsLine, LineKind, Profile
 from hosts_manager.parser import parse
 from hosts_manager.validate import ip_family
@@ -35,22 +35,19 @@ def plan_import(document: HostsDocument, profiles: list[Profile]) -> ImportPlan:
     """Scan lines outside the managed block; build entries and problems."""
     before, _, after = split_managed(document)
     plan = ImportPlan()
+    adopted = adopted_map(profiles)
     seen: dict[tuple[str, str], int] = {}
-    enabled_names: dict[str, str] = {}
-    for profile in profiles:
-        if not profile.enabled:
-            continue
-        for entry in profile.entries:
-            enabled_names.setdefault(entry.hostname.lower(), profile.name)
-
     for line in [*before, *after]:
         if line.kind in (LineKind.ENTRY, LineKind.DISABLED_ENTRY):
+            if any(
+                (name.lower(), ip_family(line.ip)) in adopted for name in line.hostnames
+            ):
+                continue
             _add_line(
                 plan,
                 line,
                 enabled=line.kind == LineKind.ENTRY,
                 seen=seen,
-                enabled_names=enabled_names,
             )
         elif line.kind == LineKind.UNKNOWN:
             plan.problems.append(
@@ -151,7 +148,6 @@ def _add_line(
     *,
     enabled: bool,
     seen: dict[tuple[str, str], int],
-    enabled_names: dict[str, str],
 ) -> None:
     family = ip_family(line.ip)
     local_seen: dict[tuple[str, str], int] = {}
@@ -160,10 +156,6 @@ def _add_line(
         prior = seen.get(key) or local_seen.get(key)
         if prior is not None:
             _fail_line(plan, line, f"Duplicate hostname '{name}' (also on line {prior})")
-            return
-        clash = enabled_names.get(name.lower())
-        if clash is not None:
-            _fail_line(plan, line, f"Hostname '{name}' already in profile '{clash}'")
             return
         local_seen[key] = line.lineno
     entries = [
