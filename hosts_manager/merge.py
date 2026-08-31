@@ -26,10 +26,13 @@ def merge_profiles(document: HostsDocument, profiles: list[Profile]) -> str:
     flattened = _flatten(enabled)
     _validate_entries(flattened)
     _raise_if_duplicate_hostnames(flattened)
-    _raise_if_unmanaged_clash(document, flattened)
 
+    adopted = adopted_map(profiles)
     before, _managed, after = split_managed(document)
-    block = _build_managed_block(enabled)
+    adopted_keys = _adopted_keys([*before, *after], adopted)
+    before = _rewrite_adopted(before, adopted)
+    after = _rewrite_adopted(after, adopted)
+    block = _build_managed_block(enabled, adopted_keys)
     combined = _join_sections(before, block, after)
     return serialize(HostsDocument(lines=combined, trailing_newline=True))
 
@@ -50,13 +53,69 @@ def split_managed(
     return document.lines[:begin], document.lines[begin : end + 1], document.lines[end + 1 :]
 
 
-def unmanaged_hostnames(document: HostsDocument) -> set[str]:
-    before, _, after = split_managed(document)
-    names: set[str] = set()
-    for line in before + after:
-        if line.kind == LineKind.ENTRY:
-            names.update(line.hostnames)
-    return names
+def adopted_map(profiles: list[Profile]) -> dict[tuple[str, str], HostEntry]:
+    """Map (hostname, family) -> owning entry; profiles in order, first match wins."""
+    adopted: dict[tuple[str, str], HostEntry] = {}
+    for profile in profiles:
+        for entry in profile.entries:
+            adopted.setdefault((entry.hostname.lower(), ip_family(entry.ip)), entry)
+    return adopted
+
+
+def _adopted_keys(
+    lines: list[HostsLine], adopted: dict[tuple[str, str], HostEntry]
+) -> set[tuple[str, str]]:
+    """Adopted keys that are actually present among the given lines."""
+    keys: set[tuple[str, str]] = set()
+    for line in lines:
+        if line.kind not in (LineKind.ENTRY, LineKind.DISABLED_ENTRY):
+            continue
+        for name in line.hostnames:
+            key = (name.lower(), ip_family(line.ip))
+            if key in adopted:
+                keys.add(key)
+    return keys
+
+
+def _rewrite_adopted(
+    lines: list[HostsLine], adopted: dict[tuple[str, str], HostEntry]
+) -> list[HostsLine]:
+    """Rewrite adopted outside-block lines in place with their owners' settings."""
+    rewritten: list[HostsLine] = []
+    for line in lines:
+        if line.kind not in (LineKind.ENTRY, LineKind.DISABLED_ENTRY):
+            rewritten.append(line)
+            continue
+        owners = [
+            adopted[(name.lower(), ip_family(line.ip))]
+            for name in line.hostnames
+            if (name.lower(), ip_family(line.ip)) in adopted
+        ]
+        if not owners:
+            rewritten.append(line)
+            continue
+        enabled = all(owner.enabled for owner in owners)
+        ips = {owner.ip for owner in owners}
+        comments = {owner.comment for owner in owners}
+        if len(ips) > 1 or len(comments) > 1:
+            names = sorted({owner.hostname for owner in owners})
+            raise MergeConflict(
+                names, f"Conflicting settings for shared line: {', '.join(names)}"
+            )
+        owner = owners[0]
+        raw = format_entry_line(owner.ip, " ".join(line.hostnames), owner.comment, enabled)
+        rewritten.append(
+            HostsLine(
+                kind=LineKind.ENTRY if enabled else LineKind.DISABLED_ENTRY,
+                raw=raw,
+                lineno=line.lineno,
+                ip=owner.ip,
+                hostnames=list(line.hostnames),
+                comment=owner.comment,
+                enabled=enabled,
+            )
+        )
+    return rewritten
 
 
 def managed_entries(document: HostsDocument) -> dict[tuple[str, str], tuple[str, str, bool]]:
@@ -99,24 +158,22 @@ def _raise_if_duplicate_hostnames(entries: list[HostEntry]) -> None:
         raise MergeConflict(dupes, f"Duplicate hostname(s) in enabled profiles: {', '.join(dupes)}")
 
 
-def _raise_if_unmanaged_clash(document: HostsDocument, entries: list[HostEntry]) -> None:
-    existing = {name.lower() for name in unmanaged_hostnames(document)}
-    clashes = sorted({entry.hostname for entry in entries if entry.hostname.lower() in existing})
-    if clashes:
-        raise MergeConflict(
-            clashes,
-            f"Hostname(s) already present outside Hosts Manager: {', '.join(clashes)}",
-        )
-
-
-def _build_managed_block(profiles: list[Profile]) -> list[HostsLine]:
+def _build_managed_block(
+    profiles: list[Profile], adopted_keys: set[tuple[str, str]]
+) -> list[HostsLine]:
     lines = [HostsLine(kind=LineKind.MANAGED_BEGIN, raw=MANAGED_BEGIN)]
-    contributing = [profile for profile in profiles if profile.entries]
-    for index, profile in enumerate(contributing):
-        lines.append(
-            HostsLine(kind=LineKind.COMMENT, raw=f"# Profile: {profile.name}")
-        )
-        for entry in profile.entries:
+    contributing: list[tuple[Profile, list[HostEntry]]] = []
+    for profile in profiles:
+        kept = [
+            entry
+            for entry in profile.entries
+            if (entry.hostname.lower(), ip_family(entry.ip)) not in adopted_keys
+        ]
+        if kept:
+            contributing.append((profile, kept))
+    for index, (profile, entries) in enumerate(contributing):
+        lines.append(HostsLine(kind=LineKind.COMMENT, raw=f"# Profile: {profile.name}"))
+        for entry in entries:
             raw = format_entry_line(entry.ip, entry.hostname, entry.comment, entry.enabled)
             kind = LineKind.ENTRY if entry.enabled else LineKind.DISABLED_ENTRY
             lines.append(
