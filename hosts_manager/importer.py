@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from hosts_manager.merge import merge_profiles, split_managed
 from hosts_manager.models import HostEntry, HostsDocument, HostsLine, LineKind, Profile
 from hosts_manager.parser import parse
+from hosts_manager.validate import ip_family
 
 IMPORT_PROFILE_ID = "existing-hosts"
 IMPORT_PROFILE_NAME = "Existing hosts"
@@ -34,7 +35,7 @@ def plan_import(document: HostsDocument, profiles: list[Profile]) -> ImportPlan:
     """Scan lines outside the managed block; build entries and problems."""
     before, _, after = split_managed(document)
     plan = ImportPlan()
-    seen: dict[str, int] = {}
+    seen: dict[tuple[str, str], int] = {}
     enabled_names: dict[str, str] = {}
     for profile in profiles:
         if not profile.enabled:
@@ -149,12 +150,14 @@ def _add_line(
     line: HostsLine,
     *,
     enabled: bool,
-    seen: dict[str, int],
+    seen: dict[tuple[str, str], int],
     enabled_names: dict[str, str],
 ) -> None:
-    local_seen: dict[str, int] = {}
+    family = ip_family(line.ip)
+    local_seen: dict[tuple[str, str], int] = {}
     for name in line.hostnames:
-        prior = seen.get(name.lower()) or local_seen.get(name.lower())
+        key = (name.lower(), family)
+        prior = seen.get(key) or local_seen.get(key)
         if prior is not None:
             _fail_line(plan, line, f"Duplicate hostname '{name}' (also on line {prior})")
             return
@@ -162,13 +165,13 @@ def _add_line(
         if clash is not None:
             _fail_line(plan, line, f"Hostname '{name}' already in profile '{clash}'")
             return
-        local_seen[name.lower()] = line.lineno
+        local_seen[key] = line.lineno
     entries = [
         HostEntry(ip=line.ip, hostname=name, enabled=enabled, comment=line.comment)
         for name in line.hostnames
     ]
     for entry in entries:
-        seen[entry.hostname.lower()] = line.lineno
+        seen[(entry.hostname.lower(), family)] = line.lineno
     plan.entries.extend(entries)
     plan.source_lines.add(line.lineno)
 

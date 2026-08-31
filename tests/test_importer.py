@@ -268,3 +268,37 @@ def test_window_flow_appends_each_entry_exactly_once():
     ensure_import_profile(profiles, plan.entries)  # window._finish_import
     import_profile = next(p for p in profiles if p.id == IMPORT_PROFILE_ID)
     assert [e.hostname for e in import_profile.entries] == ["old.local", "fresh.local"]
+
+
+def test_plan_imports_dual_stack_pair_as_two_entries():
+    doc = parse("127.0.0.1 findeep.local\n::1 findeep.local\n")
+    plan = plan_import(doc, [])
+    assert [(e.ip, e.hostname) for e in plan.entries] == [
+        ("127.0.0.1", "findeep.local"),
+        ("::1", "findeep.local"),
+    ]
+    assert plan.problems == []
+    assert plan.source_lines == {1, 2}
+
+
+def test_plan_still_flags_same_family_duplicate():
+    doc = parse("127.0.0.1 findeep.local\n10.0.0.1 findeep.local\n")
+    plan = plan_import(doc, [])
+    assert [e.hostname for e in plan.entries] == ["findeep.local"]
+    assert plan.source_lines == {1}
+    assert len(plan.problems) == 1
+    assert plan.problems[0].lineno == 2
+    assert plan.problems[0].fault == "Duplicate hostname 'findeep.local' (also on line 1)"
+
+
+def test_plan_flags_third_occurrence_of_hostname():
+    doc = parse("127.0.0.1 findeep.local\n::1 findeep.local\n10.0.0.1 findeep.local\n")
+    plan = plan_import(doc, [])
+    assert [(e.ip, e.hostname) for e in plan.entries] == [
+        ("127.0.0.1", "findeep.local"),
+        ("::1", "findeep.local"),
+    ]
+    assert plan.source_lines == {1, 2}
+    assert len(plan.problems) == 1
+    assert plan.problems[0].lineno == 3
+    assert plan.problems[0].fault == "Duplicate hostname 'findeep.local' (also on line 1)"
