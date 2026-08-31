@@ -1305,13 +1305,8 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         about.add_legal_section(
             "License",
             "",
-            Gtk.License.CUSTOM,
-            (
-                "Hosts Manager is free software licensed under the Apache License, Version 2.0.\n\n"
-                "You may use, modify, and distribute this software under the terms of the Apache License 2.0. "
-                "See the LICENSE file in the source repository for the full text.\n\n"
-                "https://www.apache.org/licenses/LICENSE-2.0"
-            ),
+            Gtk.License.APACHE_2_0,
+            "",
         )
         about.present(self)
 
