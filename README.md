@@ -185,9 +185,6 @@ python app.py
 # Tests
 .venv/bin/pytest -q
 ```
-
-Packaging details for Snap / Flatpak builders: see [PACKAGING.md](PACKAGING.md).
-
 ---
 
 
@@ -195,13 +192,6 @@ Packaging details for Snap / Flatpak builders: see [PACKAGING.md](PACKAGING.md).
 ## Contributing & support
 
 Code contributions, bug reports, and ideas are welcome — open an issue or pull request.
-
-If Hosts Manager saves you time and you’d like to support continued development:
-
-- **Buy Me a Coffee / Ko-fi:** [Coming soon — add your link here]
-- **Bitcoin:** [Coming soon — add your link here]
-
-Thank you — every bit of support helps keep the project free and maintained.
 
 ---
 
