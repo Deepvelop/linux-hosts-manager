@@ -1287,7 +1287,7 @@ class HostsManagerWindow(Adw.ApplicationWindow):
                 "Active toggles write hosts immediately. Enable auto-save in Settings to write "
                 "host edits without pressing Save."
             ),
-            developers=["Deepvelop"],
+            developers=["Stef van Diepen"],
             copyright="© 2026 Deepvelop",
             website="https://deepvelop.nl/",
             issue_url="https://github.com/deepvelop/linux-hosts-manager/issues",
@@ -1296,6 +1296,10 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         about.add_link("GitHub", "https://github.com/deepvelop/linux-hosts-manager")
         about.add_credit_section(
             "Developers",
+            ["Stef van Diepen"],
+        )
+        about.add_credit_section(
+            "Organisation",
             ["Deepvelop"],
         )
         about.add_legal_section(
