@@ -30,6 +30,8 @@ class HostEntry:
 class HostsLine:
     kind: LineKind
     raw: str
+    lineno: int = 0
+    fault: str = ""
     ip: str = ""
     hostnames: list[str] = field(default_factory=list)
     comment: str = ""

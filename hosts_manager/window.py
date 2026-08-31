@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,18 +13,22 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("Pango", "1.0")
 
-from gi.repository import Adw, Gdk, Gio, Gtk, Pango
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
 from hosts_manager import __version__
-from hosts_manager.diff import format_diff_text, managed_diff
-from hosts_manager.merge import MergeConflict, merge_profiles
-from hosts_manager.models import HostEntry, Profile
+from hosts_manager.diff import adopted_diff, managed_diff
+from hosts_manager.diff_view import build_diff_box, rows_from_changes, rows_from_sync_changes
+from hosts_manager.import_dialog import ImportDialog
+from hosts_manager.importer import ImportPlan, build_imported_text, ensure_import_profile, plan_import
+from hosts_manager.merge import MergeConflict, adopted_map, merge_profiles
+from hosts_manager.models import HostEntry, HostsDocument, Profile
 from hosts_manager.parser import parse
 from hosts_manager.polkit import WriteSessionError, apply_hosts, can_apply, ensure_authorized, skip_polkit
 from hosts_manager.profile_icons import PROFILE_ICONS, known_icon_ids, resolve_icon_name
 from hosts_manager.profiles import ProfileStore
 from hosts_manager.settings import AppSettings, SettingsStore
-from hosts_manager.validate import ValidationError, validate_entry
+from hosts_manager.sync import SyncPlan, plan_sync
+from hosts_manager.validate import ValidationError, ip_family, validate_entry
 from hosts_manager.writer import WriteError, backup_dir_from_env, hosts_path_from_env
 
 from hosts_manager.paths import APP_ID
@@ -107,6 +112,15 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         self._refresh_hosts()
         self._refresh_status()
         self._refresh_sync_status()
+        self._hosts_monitor: Gio.FileMonitor | None = None
+        self._import_open = False
+        self._sync_open = False
+        self._import_document: HostsDocument | None = None
+        self._import_digest: str | None = None
+        self._last_written_hash: str | None = None
+        self._monitor_serial = 0
+        self._start_hosts_monitor()
+        GLib.idle_add(self._on_hosts_scan)
 
     def _build_actions(self) -> None:
         for name, callback in (
@@ -119,6 +133,7 @@ class HostsManagerWindow(Adw.ApplicationWindow):
             ("about", self._on_about),
             ("settings", self._on_settings),
             ("apply", lambda *_: self._on_apply_clicked(None)),
+            ("import-hosts", lambda *_: self._maybe_present_import(force=True)),
         ):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", callback)
@@ -316,10 +331,12 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         add_btn.set_child(add_inner)
         add_btn.connect("clicked", self._on_add_host)
         bar.append(add_btn)
+        self.add_host_btn = add_btn
 
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
         bar.append(spacer)
+        self.bar_spacer = spacer
 
         self.saved_label = Gtk.Label(label="Checking sync…")
         self.saved_label.add_css_class("sync-status")
@@ -345,6 +362,7 @@ class HostsManagerWindow(Adw.ApplicationWindow):
 
     def _rebuild_menu(self) -> None:
         menu = Gio.Menu()
+        menu.append("Import Existing Hosts", "win.import-hosts")
         menu.append("Add Host", "win.add-host")
         profile = self._selected_profile()
         if profile and profile.enabled:
@@ -375,6 +393,7 @@ class HostsManagerWindow(Adw.ApplicationWindow):
             return
         auto = self.settings.auto_save
         self.apply_btn.set_visible(not auto)
+        self._apply_bar_arrangement(auto)
         if auto:
             return
         pending = False if has_pending is None else has_pending
@@ -382,6 +401,18 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         self.apply_btn.set_tooltip_text(
             "Write pending changes to the hosts file" if pending else "Nothing to save"
         )
+
+    def _apply_bar_arrangement(self, auto: bool) -> None:
+        """Auto-save mode: status left, Add host right. Manual mode: Add host left, Save right."""
+        bar = self.apply_btn.get_parent()
+        if bar is None:
+            return
+        if auto:
+            bar.reorder_child_after(self.saved_label, None)
+            bar.reorder_child_after(self.add_host_btn, self.bar_spacer)
+        else:
+            bar.reorder_child_after(self.add_host_btn, None)
+            bar.reorder_child_after(self.bar_spacer, self.add_host_btn)
 
     def _refresh_sync_status(self) -> None:
         path = hosts_path_from_env()
@@ -392,13 +423,14 @@ class HostsManagerWindow(Adw.ApplicationWindow):
             self._sync_apply_button(has_pending=False)
             return
         document = parse(current)
+        adopted = adopted_map(self.profiles)
         try:
             new_text = merge_profiles(document, self.profiles)
         except MergeConflict as exc:
             self.saved_label.set_text(f"Conflict: {exc.hostnames[0]}")
             self._sync_apply_button(has_pending=False)
             return
-        changes = managed_diff(document, new_text)
+        changes = managed_diff(document, new_text) + adopted_diff(document, new_text, adopted)
         if changes:
             self.saved_label.set_text(f"{len(changes)} unapplied change{'s' if len(changes) != 1 else ''}")
         elif self.settings.auto_save:
@@ -969,13 +1001,15 @@ class HostsManagerWindow(Adw.ApplicationWindow):
                 error.set_text(str(exc))
                 error.set_visible(True)
                 return
-            others = [
+            same_family = [
                 item.hostname.lower()
                 for i, item in enumerate(profile.entries)
-                if i != index
+                if i != index and ip_family(item.ip) == ip_family(draft.ip)
             ]
-            if draft.hostname.lower() in others:
-                error.set_text("This profile already has that hostname.")
+            if draft.hostname.lower() in same_family:
+                error.set_text(
+                    "This profile already has that hostname on the same address family."
+                )
                 error.set_visible(True)
                 return
             if index is None:
@@ -1008,12 +1042,13 @@ class HostsManagerWindow(Adw.ApplicationWindow):
             self._alert("Cannot read hosts file", str(exc))
             return False
         document = parse(current)
+        adopted = adopted_map(self.profiles)
         try:
             new_text = merge_profiles(document, self.profiles)
         except MergeConflict as exc:
             self._alert("Cannot save changes", str(exc))
             return False
-        changes = managed_diff(document, new_text)
+        changes = managed_diff(document, new_text) + adopted_diff(document, new_text, adopted)
         if not changes:
             if confirm:
                 self.toast_overlay.add_toast(Adw.Toast(title="Nothing to save"))
@@ -1021,8 +1056,8 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         if confirm:
             self._pending_text = new_text
             self._pending_toast = success_toast
-            body = format_diff_text(changes)
-            dialog = Adw.AlertDialog(heading="Changes", body=body)
+            dialog = Adw.AlertDialog(heading="Changes")
+            dialog.set_extra_child(build_diff_box(rows_from_changes(changes)))
             dialog.add_response("cancel", "Cancel")
             dialog.add_response("apply", "Save")
             dialog.set_default_response("apply")
@@ -1062,7 +1097,199 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         self.toast_overlay.add_toast(Adw.Toast(title=success_toast))
         self._refresh_status()
         self._refresh_sync_status()
+        self._last_written_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         return True
+
+    def _start_hosts_monitor(self) -> None:
+        try:
+            directory = hosts_path_from_env().parent
+            monitor = Gio.File.new_for_path(str(directory)).monitor_directory(
+                Gio.FileMonitorFlags.NONE, None
+            )
+            monitor.connect("changed", self._on_hosts_dir_changed)
+            self._hosts_monitor = monitor
+        except Exception:
+            self._hosts_monitor = None
+
+    def _on_hosts_dir_changed(self, _monitor, file, _other, event_type) -> None:
+        if file is None:
+            return
+        if (file.get_basename() or "") != hosts_path_from_env().name:
+            return
+        if event_type in (
+            Gio.FileMonitorEvent.CHANGES_DONE_HINT,
+            Gio.FileMonitorEvent.CREATED,
+            Gio.FileMonitorEvent.DELETED,
+            Gio.FileMonitorEvent.RENAMED,
+            Gio.FileMonitorEvent.MOVED_IN,
+            Gio.FileMonitorEvent.MOVED_OUT,
+        ):
+            self._schedule_import_scan()
+
+    def _schedule_import_scan(self) -> None:
+        self._monitor_serial += 1
+        serial = self._monitor_serial
+
+        def scan() -> bool:
+            if serial != self._monitor_serial:
+                return GLib.SOURCE_REMOVE
+            self._on_hosts_scan()
+            return GLib.SOURCE_REMOVE
+
+        GLib.timeout_add(400, scan)
+
+    def _maybe_present_import(self, force: bool = False) -> None:
+        if self._import_open:
+            return
+        path = hosts_path_from_env()
+        try:
+            current = path.read_text(encoding="utf-8")
+        except OSError:
+            return
+        digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
+        if not force and digest == self._last_written_hash:
+            return
+        document = parse(current)
+        plan = plan_import(document, self.profiles)
+        if not plan.entries and not plan.problems:
+            if force:
+                self.toast_overlay.add_toast(Adw.Toast(title="Nothing to import"))
+            return
+        self._import_open = True
+        self._import_document = document
+        self._import_digest = digest
+        self._last_written_hash = digest  # no re-trigger until the file changes again
+        dialog = ImportDialog(document, plan, self.profiles, self._on_import_result)
+        try:
+            dialog.connect("close-attempt", lambda *_: self._on_import_result(None))
+        except TypeError:
+            pass  # libadwaita without close-attempt: Cancel is the only exit
+        dialog.present(self)
+
+    def _on_hosts_scan(self) -> None:
+        if not self._maybe_present_sync():
+            self._maybe_present_import()
+
+    def _maybe_present_sync(self) -> bool:
+        if self._sync_open:
+            return True
+        path = hosts_path_from_env()
+        try:
+            current = path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
+        if digest == self._last_written_hash:
+            return False
+        plan = plan_sync(parse(current), self.profiles)
+        if not plan.changes:
+            return False
+        self._sync_open = True
+        dialog = Adw.AlertDialog(heading="The hosts file changed outside the app")
+        dialog.set_extra_child(build_diff_box(rows_from_sync_changes(plan.changes)))
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("apply", "Apply")
+        dialog.set_default_response("apply")
+        dialog.set_close_response("cancel")
+        dialog.set_response_appearance("apply", Adw.ResponseAppearance.SUGGESTED)
+        try:
+            dialog.connect("close-attempt", lambda *_: self._finish_sync_choice(None))
+        except TypeError:
+            pass
+
+        def on_response(response: str) -> None:
+            self._finish_sync_choice(plan if response == "apply" else None)
+
+        self._present_alert(dialog, on_response)
+        return True
+
+    def _finish_sync_choice(self, plan: SyncPlan | None) -> None:
+        if not self._sync_open:
+            return
+        self._sync_open = False
+        if plan is not None:
+            self.profiles = plan.profiles
+            self._persist()
+            self._refresh_profiles()
+            self._refresh_hosts()
+            self._refresh_sync_status()
+            path = hosts_path_from_env()
+            try:
+                digest = hashlib.sha256(path.read_text(encoding="utf-8")).hexdigest()
+            except OSError:
+                digest = None
+            if digest:
+                self._last_written_hash = digest
+        else:
+            self._refresh_sync_status()
+        self._maybe_present_import()
+
+    def _on_import_result(self, final_plan: ImportPlan | None) -> None:
+        self._import_open = False
+        if final_plan is None:
+            return
+        self._apply_import(final_plan)
+
+    def _verify_unchanged(self) -> bool:
+        """Return True when the hosts file still matches the import snapshot."""
+        if self._import_digest is None:
+            return False
+        path = hosts_path_from_env()
+        try:
+            current = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            self._alert("Cannot read hosts file", str(exc))
+            return False
+        digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
+        if digest != self._import_digest:
+            self.toast_overlay.add_toast(Adw.Toast(title="Hosts file changed during import"))
+            self._maybe_present_import(force=True)
+            return False
+        return True
+
+    def _apply_import(self, plan: ImportPlan) -> None:
+        document = self._import_document
+        if document is None or self._import_digest is None:
+            return
+        if not self._verify_unchanged():
+            return
+        try:
+            new_text = build_imported_text(document, plan, self.profiles)
+        except (ValueError, MergeConflict) as exc:
+            self._alert("Cannot import", str(exc))
+            return
+        changes = managed_diff(document, new_text)
+        if not changes and not plan.delete_lines:
+            self.toast_overlay.add_toast(Adw.Toast(title="Nothing to import"))
+            return
+        note = ""
+        if plan.delete_lines:
+            note = f"Removes {len(plan.delete_lines)} unparsable line(s) from the hosts file."
+        dialog = Adw.AlertDialog(heading="Import changes")
+        dialog.set_extra_child(build_diff_box(rows_from_changes(changes), note=note))
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("apply", "Save")
+        dialog.set_default_response("apply")
+        dialog.set_close_response("cancel")
+        dialog.set_response_appearance("apply", Adw.ResponseAppearance.SUGGESTED)
+
+        def on_response(response: str) -> None:
+            if response != "apply":
+                return
+            if not self._verify_unchanged():
+                return
+            if self._do_write_hosts(new_text, "Imported existing hosts"):
+                self._finish_import(plan)
+
+        self._present_alert(dialog, on_response)
+
+    def _finish_import(self, plan: ImportPlan) -> None:
+        if plan.entries:
+            ensure_import_profile(self.profiles, plan.entries)
+        self._persist()
+        self._refresh_profiles()
+        self._refresh_hosts()
+        self._refresh_sync_status()
 
     def _on_about(self, *_args) -> None:
         about = Adw.AboutDialog(
@@ -1075,31 +1302,20 @@ class HostsManagerWindow(Adw.ApplicationWindow):
                 "Active toggles write hosts immediately. Enable auto-save in Settings to write "
                 "host edits without pressing Save."
             ),
-            developers=["Deepvelop"],
+            developers=["Stef van Diepen"],
             copyright="© 2026 Deepvelop",
             website="https://deepvelop.nl/",
             issue_url="https://github.com/deepvelop/linux-hosts-manager/issues",
             license_type=Gtk.License.APACHE_2_0,
         )
-        about.add_link("Website", "https://deepvelop.nl/")
         about.add_link("GitHub", "https://github.com/deepvelop/linux-hosts-manager")
         about.add_credit_section(
-            "Deepvelop",
-            [
-                "https://deepvelop.nl/",
-                "https://github.com/deepvelop/linux-hosts-manager",
-            ],
+            "Developers",
+            ["Stef van Diepen"],
         )
-        about.add_legal_section(
-            "License",
-            "© 2026 Deepvelop",
-            Gtk.License.APACHE_2_0,
-            (
-                "Hosts Manager is free software licensed under the Apache License, Version 2.0.\n\n"
-                "You may use, modify, and distribute this software under the terms of the Apache License 2.0. "
-                "See the LICENSE file in the source repository for the full text.\n\n"
-                "https://www.apache.org/licenses/LICENSE-2.0"
-            ),
+        about.add_credit_section(
+            "Organisation",
+            ["Deepvelop"],
         )
         about.present(self)
 

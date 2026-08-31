@@ -52,3 +52,8 @@ def validate_hostnames(hostnames: list[str]) -> None:
         raise ValidationError("At least one hostname is required")
     for hostname in hostnames:
         validate_hostname(hostname)
+
+
+def ip_family(ip: str) -> str:
+    """Return "ipv4" or "ipv6" for a hosts-file IP literal."""
+    return "ipv6" if ":" in ip else "ipv4"

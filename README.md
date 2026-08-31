@@ -38,6 +38,10 @@ Built with **Python**, **GTK 4**, and **libadwaita**. The GUI runs as your norma
 - **Validation** — IP addresses and hostnames are checked before save
 - **Diff before Save** — review `+` / `-` changes when auto-save is off
 - **Auto-save** — optional setting to write the hosts file as you edit
+- **Import existing hosts** — entries already in `/etc/hosts` are detected and moved into an enabled "Existing hosts" profile; unparsable lines get a per-line review (line number, content, fault) with Edit / Remove / Retry
+- **Dual-stack hosts** — map the same hostname to both an IPv4 and an IPv6 address; one row per family, each with its own toggle
+- **Adopted lines** — hosts-file lines that match a profile entry are managed in place: toggling the entry rewrites the line where it sits, no import or move needed
+- **File sync** — edits made directly in the hosts file are offered back into the app (Apply or Cancel), so both stay in step
 - **Backups** — automatic backups before every privileged write
 - **Session auth** — admin access once per session; no re-prompt for every save
 - **Never runs as root** — the GUI stays unprivileged; only a small helper is elevated
@@ -147,6 +151,17 @@ sudo snap install hosts-manager --classic
 3. With **auto-save** off, press **Save** and review the diff.
 4. With **auto-save** on (or when toggling **Active**), the hosts file is updated immediately after admin approval.
 5. Everything outside the managed block is left untouched.
+
+### Importing existing hosts
+
+On first launch — and whenever `/etc/hosts` changes outside the app — Hosts Manager offers to import unmanaged entries into an enabled "Existing hosts" profile:
+
+1. Entries outside the managed block are moved into it, reformatted by the app.
+2. Lines that can't be parsed are listed with their line number, content, and the fault.
+3. Fix a line with **Edit**, drop it with **Remove**, then press **Retry** to re-validate.
+4. **Import** is enabled once every line is resolved; the resulting diff is shown before anything is written.
+
+Tip: rewriting a problem line so it starts with `#` keeps it in the hosts file as a comment instead of importing it. The profile menu's **Import Existing Hosts** re-runs the scan at any time.
 
 ---
 

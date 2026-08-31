@@ -1,5 +1,11 @@
-from hosts_manager.diff import DiffChange, format_diff_text, managed_diff
+from hosts_manager.diff import DiffChange, adopted_diff, format_diff_text, managed_diff
+from hosts_manager.merge import adopted_map
+from hosts_manager.models import HostEntry, Profile
 from hosts_manager.parser import parse
+
+
+def _adopted(*entries: HostEntry) -> dict:
+    return adopted_map([Profile(id="p", name="P", icon="default", enabled=True, entries=list(entries))])
 
 
 def test_diff_added_and_removed_managed_entries():
@@ -64,4 +70,74 @@ def test_format_diff_text_includes_enable_disable():
         format_diff_text(changes)
         == "~ 127.0.0.1 app.local (disabled)\n~ 10.0.0.1 api.local (enabled)"
     )
+
+
+def test_diff_keeps_both_families_of_dual_hostname():
+    old = parse(
+        "# BEGIN Hosts Manager\n127.0.0.1 findeep.local\n::1 findeep.local\n# END Hosts Manager\n"
+    )
+    new_text = (
+        "# BEGIN Hosts Manager\n# 127.0.0.1 findeep.local\n::1 findeep.local\n# END Hosts Manager\n"
+    )
+    changes = managed_diff(old, new_text)
+    assert changes == [DiffChange(kind="disable", ip="127.0.0.1", hostname="findeep.local")]
+
+
+def test_diff_adds_second_family_independently():
+    old = parse("# BEGIN Hosts Manager\n127.0.0.1 findeep.local\n# END Hosts Manager\n")
+    new_text = (
+        "# BEGIN Hosts Manager\n127.0.0.1 findeep.local\n::1 findeep.local\n# END Hosts Manager\n"
+    )
+    changes = managed_diff(old, new_text)
+    assert changes == [DiffChange(kind="add", ip="::1", hostname="findeep.local")]
+
+
+def test_diff_removes_one_family_only():
+    old = parse(
+        "# BEGIN Hosts Manager\n127.0.0.1 findeep.local\n::1 findeep.local\n# END Hosts Manager\n"
+    )
+    new_text = "# BEGIN Hosts Manager\n127.0.0.1 findeep.local\n# END Hosts Manager\n"
+    changes = managed_diff(old, new_text)
+    assert changes == [DiffChange(kind="remove", ip="::1", hostname="findeep.local")]
+
+
+def test_adopted_diff_detects_disable():
+    old = parse("127.0.0.1 localhost\n")
+    new_text = "# 127.0.0.1 localhost\n"
+    adopted = _adopted(HostEntry(ip="127.0.0.1", hostname="localhost", enabled=False))
+    assert adopted_diff(old, new_text, adopted) == [
+        DiffChange(kind="disable", ip="127.0.0.1", hostname="localhost")
+    ]
+
+
+def test_adopted_diff_detects_enable():
+    old = parse("# 127.0.0.1 localhost\n")
+    new_text = "127.0.0.1 localhost\n"
+    adopted = _adopted(HostEntry(ip="127.0.0.1", hostname="localhost", enabled=True))
+    assert adopted_diff(old, new_text, adopted) == [
+        DiffChange(kind="enable", ip="127.0.0.1", hostname="localhost")
+    ]
+
+
+def test_adopted_diff_detects_ip_change():
+    old = parse("127.0.0.1 localhost\n")
+    new_text = "10.0.0.1 localhost\n"
+    adopted = _adopted(HostEntry(ip="10.0.0.1", hostname="localhost"))
+    assert adopted_diff(old, new_text, adopted) == [
+        DiffChange(kind="remove", ip="127.0.0.1", hostname="localhost"),
+        DiffChange(kind="add", ip="10.0.0.1", hostname="localhost"),
+    ]
+
+
+def test_adopted_diff_empty_when_unchanged():
+    old = parse("127.0.0.1 localhost\n")
+    adopted = _adopted(HostEntry(ip="127.0.0.1", hostname="localhost"))
+    assert adopted_diff(old, "127.0.0.1 localhost\n", adopted) == []
+
+
+def test_adopted_diff_ignores_foreign_lines():
+    old = parse("10.0.0.1 stranger.local\n")
+    new_text = "10.0.0.2 stranger.local\n"
+    adopted = _adopted(HostEntry(ip="127.0.0.1", hostname="localhost"))
+    assert adopted_diff(old, new_text, adopted) == []
 

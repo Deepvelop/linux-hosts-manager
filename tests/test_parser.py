@@ -70,3 +70,34 @@ def test_blank_lines_are_preserved():
 def test_comment_only_ip_without_hostname_stays_comment():
     doc = parse("# 127.0.0.1\n")
     assert doc.lines[0].kind == LineKind.COMMENT
+
+
+def test_lines_carry_one_based_line_numbers():
+    doc = parse("127.0.0.1 localhost\n\n# c\n")
+    assert [line.lineno for line in doc.lines] == [1, 2, 3]
+
+
+def test_unknown_line_reports_missing_hostname_fault():
+    doc = parse("127.0.0.1\n")
+    line = doc.lines[0]
+    assert line.kind == LineKind.UNKNOWN
+    assert line.fault == "Not a hosts entry (expected: IP hostname)"
+
+
+def test_unknown_line_reports_invalid_ip_fault():
+    doc = parse("999.999.999.999 foo.local\n")
+    line = doc.lines[0]
+    assert line.kind == LineKind.UNKNOWN
+    assert line.fault == "Invalid IP address: 999.999.999.999"
+
+
+def test_unknown_line_reports_invalid_hostname_fault():
+    doc = parse("127.0.0.1 bad_hostname\n")
+    line = doc.lines[0]
+    assert line.kind == LineKind.UNKNOWN
+    assert line.fault == "Invalid hostname: bad_hostname"
+
+
+def test_valid_lines_have_empty_fault():
+    doc = parse("127.0.0.1 app.local  # Local application\n")
+    assert doc.lines[0].fault == ""

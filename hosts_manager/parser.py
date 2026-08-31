@@ -14,7 +14,10 @@ def parse(text: str) -> HostsDocument:
     trailing_newline = text.endswith("\n") or text == ""
     raw_lines = text.splitlines()
     return HostsDocument(
-        lines=[_parse_line(raw) for raw in raw_lines],
+        lines=[
+            _parse_line(raw, lineno=index + 1)
+            for index, raw in enumerate(raw_lines)
+        ],
         trailing_newline=trailing_newline,
     )
 
@@ -37,47 +40,49 @@ def format_entry_line(ip: str, hostname: str, comment: str = "", enabled: bool =
     return line
 
 
-def _parse_line(raw: str) -> HostsLine:
+def _parse_line(raw: str, lineno: int = 0) -> HostsLine:
     stripped = raw.strip()
     if stripped == "":
-        return HostsLine(kind=LineKind.BLANK, raw=raw)
+        return HostsLine(kind=LineKind.BLANK, raw=raw, lineno=lineno)
     if stripped == MANAGED_BEGIN:
-        return HostsLine(kind=LineKind.MANAGED_BEGIN, raw=raw)
+        return HostsLine(kind=LineKind.MANAGED_BEGIN, raw=raw, lineno=lineno)
     if stripped == MANAGED_END:
-        return HostsLine(kind=LineKind.MANAGED_END, raw=raw)
+        return HostsLine(kind=LineKind.MANAGED_END, raw=raw, lineno=lineno)
 
     if stripped.startswith("#"):
         remainder = stripped[1:].lstrip()
-        parsed = _try_parse_entry(remainder)
+        parsed, _fault = _try_parse_entry(remainder)
         if parsed is not None:
             ip, hostnames, comment = parsed
             return HostsLine(
                 kind=LineKind.DISABLED_ENTRY,
                 raw=raw,
+                lineno=lineno,
                 ip=ip,
                 hostnames=hostnames,
                 comment=comment,
                 enabled=False,
             )
-        return HostsLine(kind=LineKind.COMMENT, raw=raw)
+        return HostsLine(kind=LineKind.COMMENT, raw=raw, lineno=lineno)
 
-    parsed = _try_parse_entry(stripped)
+    parsed, fault = _try_parse_entry(stripped)
     if parsed is not None:
         ip, hostnames, comment = parsed
         return HostsLine(
             kind=LineKind.ENTRY,
             raw=raw,
+            lineno=lineno,
             ip=ip,
             hostnames=hostnames,
             comment=comment,
             enabled=True,
         )
-    return HostsLine(kind=LineKind.UNKNOWN, raw=raw)
+    return HostsLine(kind=LineKind.UNKNOWN, raw=raw, lineno=lineno, fault=fault)
 
 
-def _try_parse_entry(body: str) -> tuple[str, list[str], str] | None:
+def _try_parse_entry(body: str) -> tuple[tuple[str, list[str], str] | None, str]:
     if not body:
-        return None
+        return None, ""
     comment = ""
     if " #" in body or body.startswith("#"):
         # Inline comment: split on the last-ish hosts-file convention (first unquoted #)
@@ -87,15 +92,18 @@ def _try_parse_entry(body: str) -> tuple[str, list[str], str] | None:
             body = body[:hash_at].rstrip()
     tokens = body.split()
     if len(tokens) < 2:
-        return None
+        return None, "Not a hosts entry (expected: IP hostname)"
     ip, hostnames = tokens[0], tokens[1:]
     try:
         validate_ip(ip)
-        for hostname in hostnames:
-            validate_hostname(hostname)
     except Exception:
-        return None
-    return ip, hostnames, comment
+        return None, f"Invalid IP address: {ip}"
+    for hostname in hostnames:
+        try:
+            validate_hostname(hostname)
+        except Exception:
+            return None, f"Invalid hostname: {hostname}"
+    return (ip, hostnames, comment), ""
 
 
 def _inline_comment_index(body: str) -> int | None:

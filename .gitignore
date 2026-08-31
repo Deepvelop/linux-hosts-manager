@@ -10,6 +10,7 @@ dist/
 # Local tooling caches
 graphify-out/
 .superpowers/
+docs/superpowers/
 
 # Snap / Flatpak packaging — kept local, not published in the repo
 flatpak/
