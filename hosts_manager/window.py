@@ -26,7 +26,7 @@ from hosts_manager.polkit import WriteSessionError, apply_hosts, can_apply, ensu
 from hosts_manager.profile_icons import PROFILE_ICONS, known_icon_ids, resolve_icon_name
 from hosts_manager.profiles import ProfileStore
 from hosts_manager.settings import AppSettings, SettingsStore
-from hosts_manager.validate import ValidationError, validate_entry
+from hosts_manager.validate import ValidationError, ip_family, validate_entry
 from hosts_manager.writer import WriteError, backup_dir_from_env, hosts_path_from_env
 
 from hosts_manager.paths import APP_ID
@@ -982,13 +982,15 @@ class HostsManagerWindow(Adw.ApplicationWindow):
                 error.set_text(str(exc))
                 error.set_visible(True)
                 return
-            others = [
+            same_family = [
                 item.hostname.lower()
                 for i, item in enumerate(profile.entries)
-                if i != index
+                if i != index and ip_family(item.ip) == ip_family(draft.ip)
             ]
-            if draft.hostname.lower() in others:
-                error.set_text("This profile already has that hostname.")
+            if draft.hostname.lower() in same_family:
+                error.set_text(
+                    "This profile already has that hostname on the same address family."
+                )
                 error.set_visible(True)
                 return
             if index is None:
