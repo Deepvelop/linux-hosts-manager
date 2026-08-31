@@ -63,7 +63,12 @@ def plan_sync(document: HostsDocument, profiles: list[Profile]) -> SyncPlan:
                 kept.append(entry)
                 continue
             changes.append(
-                SyncChange(profile=profile.name, kind="remove", ip="", hostname=entry.hostname)
+                SyncChange(
+                    profile=profile.name,
+                    kind="remove",
+                    ip=entry.ip,
+                    hostname=entry.hostname,
+                )
             )
         profile.entries = kept
 
@@ -111,7 +116,7 @@ def _reconcile_section(
             )
         elif new is None and old is not None:
             changes.append(
-                SyncChange(profile=profile.name, kind="remove", ip="", hostname=old.hostname)
+                SyncChange(profile=profile.name, kind="remove", ip=old.ip, hostname=old.hostname)
             )
         elif old is not None and new is not None:
             if (old.ip, old.comment, old.enabled) != (new.ip, new.comment, new.enabled):

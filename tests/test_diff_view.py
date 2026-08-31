@@ -28,10 +28,10 @@ def test_rows_from_sync_changes():
     changes = [
         SyncChange(profile="Development", kind="add", ip="127.0.0.1", hostname="foo.local"),
         SyncChange(profile="Development", kind="update", ip="10.0.0.1", hostname="bar.local"),
-        SyncChange(profile="Development", kind="remove", ip="", hostname="baz.local"),
+        SyncChange(profile="Development", kind="remove", ip="192.168.0.1", hostname="baz.local"),
     ]
     assert rows_from_sync_changes(changes) == [
         ("add", "127.0.0.1 foo.local"),
         ("change", "10.0.0.1 bar.local"),
-        ("remove", "baz.local"),
+        ("remove", "192.168.0.1 baz.local"),
     ]

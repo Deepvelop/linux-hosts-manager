@@ -78,6 +78,7 @@ def test_block_line_removed_removes_entry():
     plan = plan_sync(doc, profiles)
     assert [c.kind for c in plan.changes] == ["remove"]
     assert plan.changes[0].hostname == "app.local"
+    assert plan.changes[0].ip == "127.0.0.1"
     assert plan.profiles[0].entries == []
 
 
@@ -124,6 +125,10 @@ def test_profile_section_deleted_removes_block_entries():
     plan = plan_sync(doc, profiles)
     assert {c.kind for c in plan.changes} == {"remove"}
     assert {c.hostname for c in plan.changes} == {"app.local", "stg.local"}
+    assert {(c.hostname, c.ip) for c in plan.changes} == {
+        ("app.local", "127.0.0.1"),
+        ("stg.local", "10.0.0.1"),
+    }
 
 
 def test_empty_profile_untouched():
