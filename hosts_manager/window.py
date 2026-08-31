@@ -16,7 +16,8 @@ gi.require_version("Pango", "1.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
 from hosts_manager import __version__
-from hosts_manager.diff import adopted_diff, format_diff_text, managed_diff
+from hosts_manager.diff import adopted_diff, managed_diff
+from hosts_manager.diff_view import build_diff_box, rows_from_changes, rows_from_sync_changes
 from hosts_manager.import_dialog import ImportDialog
 from hosts_manager.importer import ImportPlan, build_imported_text, ensure_import_profile, plan_import
 from hosts_manager.merge import MergeConflict, adopted_map, merge_profiles
@@ -26,7 +27,7 @@ from hosts_manager.polkit import WriteSessionError, apply_hosts, can_apply, ensu
 from hosts_manager.profile_icons import PROFILE_ICONS, known_icon_ids, resolve_icon_name
 from hosts_manager.profiles import ProfileStore
 from hosts_manager.settings import AppSettings, SettingsStore
-from hosts_manager.sync import SyncChange, SyncPlan, plan_sync
+from hosts_manager.sync import SyncPlan, plan_sync
 from hosts_manager.validate import ValidationError, ip_family, validate_entry
 from hosts_manager.writer import WriteError, backup_dir_from_env, hosts_path_from_env
 
@@ -47,12 +48,6 @@ def _load_css() -> None:
         provider,
         Gtk.STYLE_PROVIDER_PRIORITY_USER,
     )
-
-
-def _sync_change_text(change: SyncChange) -> str:
-    marks = {"add": "+", "update": "~", "remove": "-"}
-    target = f"{change.ip} {change.hostname}".strip()
-    return f"{marks[change.kind]} {change.profile} — {target}"
 
 
 def _icon(name: str, size: int = 16) -> Gtk.Image:
@@ -1046,8 +1041,8 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         if confirm:
             self._pending_text = new_text
             self._pending_toast = success_toast
-            body = format_diff_text(changes)
-            dialog = Adw.AlertDialog(heading="Changes", body=body)
+            dialog = Adw.AlertDialog(heading="Changes")
+            dialog.set_extra_child(build_diff_box(rows_from_changes(changes)))
             dialog.add_response("cancel", "Cancel")
             dialog.add_response("apply", "Save")
             dialog.set_default_response("apply")
@@ -1175,11 +1170,8 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         if not plan.changes:
             return False
         self._sync_open = True
-        body = "\n".join(_sync_change_text(change) for change in plan.changes)
-        dialog = Adw.AlertDialog(
-            heading="The hosts file changed outside the app",
-            body=body,
-        )
+        dialog = Adw.AlertDialog(heading="The hosts file changed outside the app")
+        dialog.set_extra_child(build_diff_box(rows_from_sync_changes(plan.changes)))
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("apply", "Apply")
         dialog.set_default_response("apply")
@@ -1213,6 +1205,8 @@ class HostsManagerWindow(Adw.ApplicationWindow):
                 digest = None
             if digest:
                 self._last_written_hash = digest
+        else:
+            self._refresh_sync_status()
         self._maybe_present_import()
 
     def _on_import_result(self, final_plan: ImportPlan | None) -> None:
@@ -1253,13 +1247,11 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         if not changes and not plan.delete_lines:
             self.toast_overlay.add_toast(Adw.Toast(title="Nothing to import"))
             return
-        if changes:
-            body = format_diff_text(changes)
-            if plan.delete_lines:
-                body += f"\nRemoves {len(plan.delete_lines)} unparsable line(s) from the hosts file."
-        else:
-            body = f"Removes {len(plan.delete_lines)} unparsable line(s) from the hosts file."
-        dialog = Adw.AlertDialog(heading="Import changes", body=body)
+        note = ""
+        if plan.delete_lines:
+            note = f"Removes {len(plan.delete_lines)} unparsable line(s) from the hosts file."
+        dialog = Adw.AlertDialog(heading="Import changes")
+        dialog.set_extra_child(build_diff_box(rows_from_changes(changes), note=note))
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("apply", "Save")
         dialog.set_default_response("apply")
