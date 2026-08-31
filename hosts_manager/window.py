@@ -16,10 +16,10 @@ gi.require_version("Pango", "1.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
 from hosts_manager import __version__
-from hosts_manager.diff import format_diff_text, managed_diff
+from hosts_manager.diff import adopted_diff, format_diff_text, managed_diff
 from hosts_manager.import_dialog import ImportDialog
 from hosts_manager.importer import ImportPlan, build_imported_text, ensure_import_profile, plan_import
-from hosts_manager.merge import MergeConflict, merge_profiles
+from hosts_manager.merge import MergeConflict, adopted_map, merge_profiles
 from hosts_manager.models import HostEntry, HostsDocument, Profile
 from hosts_manager.parser import parse
 from hosts_manager.polkit import WriteSessionError, apply_hosts, can_apply, ensure_authorized, skip_polkit
@@ -405,13 +405,14 @@ class HostsManagerWindow(Adw.ApplicationWindow):
             self._sync_apply_button(has_pending=False)
             return
         document = parse(current)
+        adopted = adopted_map(self.profiles)
         try:
             new_text = merge_profiles(document, self.profiles)
         except MergeConflict as exc:
             self.saved_label.set_text(f"Conflict: {exc.hostnames[0]}")
             self._sync_apply_button(has_pending=False)
             return
-        changes = managed_diff(document, new_text)
+        changes = managed_diff(document, new_text) + adopted_diff(document, new_text, adopted)
         if changes:
             self.saved_label.set_text(f"{len(changes)} unapplied change{'s' if len(changes) != 1 else ''}")
         elif self.settings.auto_save:
@@ -1023,12 +1024,13 @@ class HostsManagerWindow(Adw.ApplicationWindow):
             self._alert("Cannot read hosts file", str(exc))
             return False
         document = parse(current)
+        adopted = adopted_map(self.profiles)
         try:
             new_text = merge_profiles(document, self.profiles)
         except MergeConflict as exc:
             self._alert("Cannot save changes", str(exc))
             return False
-        changes = managed_diff(document, new_text)
+        changes = managed_diff(document, new_text) + adopted_diff(document, new_text, adopted)
         if not changes:
             if confirm:
                 self.toast_overlay.add_toast(Adw.Toast(title="Nothing to save"))
