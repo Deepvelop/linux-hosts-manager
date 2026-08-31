@@ -41,6 +41,7 @@ Built with **Python**, **GTK 4**, and **libadwaita**. The GUI runs as your norma
 - **Import existing hosts** — entries already in `/etc/hosts` are detected and moved into an enabled "Existing hosts" profile; unparsable lines get a per-line review (line number, content, fault) with Edit / Remove / Retry
 - **Dual-stack hosts** — map the same hostname to both an IPv4 and an IPv6 address; one row per family, each with its own toggle
 - **Adopted lines** — hosts-file lines that match a profile entry are managed in place: toggling the entry rewrites the line where it sits, no import or move needed
+- **File sync** — edits made directly in the hosts file are offered back into the app (Apply or Cancel), so both stay in step
 - **Backups** — automatic backups before every privileged write
 - **Session auth** — admin access once per session; no re-prompt for every save
 - **Never runs as root** — the GUI stays unprivileged; only a small helper is elevated
