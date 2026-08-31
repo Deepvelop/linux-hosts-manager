@@ -5,8 +5,9 @@ from __future__ import annotations
 import gi
 
 gi.require_version("Gtk", "4.0")
+gi.require_version("Pango", "1.0")
 
-from gi.repository import Gtk
+from gi.repository import Gtk, Pango
 
 from hosts_manager.diff import DiffChange
 from hosts_manager.sync import SyncChange
