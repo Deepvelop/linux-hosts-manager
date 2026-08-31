@@ -360,3 +360,15 @@ button.apply-button:disabled {
   color: #f85149;
   font-family: monospace;
 }
+
+.import-raw {
+  font-family: monospace;
+}
+
+.import-lineno {
+  font-family: monospace;
+}
+
+.import-fault {
+  color: #e01b24;
+}
