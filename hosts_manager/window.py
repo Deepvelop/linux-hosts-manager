@@ -331,10 +331,12 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         add_btn.set_child(add_inner)
         add_btn.connect("clicked", self._on_add_host)
         bar.append(add_btn)
+        self.add_host_btn = add_btn
 
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
         bar.append(spacer)
+        self.bar_spacer = spacer
 
         self.saved_label = Gtk.Label(label="Checking sync…")
         self.saved_label.add_css_class("sync-status")
@@ -391,6 +393,7 @@ class HostsManagerWindow(Adw.ApplicationWindow):
             return
         auto = self.settings.auto_save
         self.apply_btn.set_visible(not auto)
+        self._apply_bar_arrangement(auto)
         if auto:
             return
         pending = False if has_pending is None else has_pending
@@ -398,6 +401,18 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         self.apply_btn.set_tooltip_text(
             "Write pending changes to the hosts file" if pending else "Nothing to save"
         )
+
+    def _apply_bar_arrangement(self, auto: bool) -> None:
+        """Auto-save mode: status left, Add host right. Manual mode: Add host left, Save right."""
+        bar = self.apply_btn.get_parent()
+        if bar is None:
+            return
+        if auto:
+            bar.reorder_child_after(self.saved_label, None)
+            bar.reorder_child_after(self.add_host_btn, self.bar_spacer)
+        else:
+            bar.reorder_child_after(self.add_host_btn, None)
+            bar.reorder_child_after(self.bar_spacer, self.add_host_btn)
 
     def _refresh_sync_status(self) -> None:
         path = hosts_path_from_env()
