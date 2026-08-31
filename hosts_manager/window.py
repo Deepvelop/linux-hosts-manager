@@ -1304,8 +1304,8 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         )
         about.add_legal_section(
             "License",
-            "© 2026 Deepvelop",
-            Gtk.License.APACHE_2_0,
+            "",
+            Gtk.License.CUSTOM,
             (
                 "Hosts Manager is free software licensed under the Apache License, Version 2.0.\n\n"
                 "You may use, modify, and distribute this software under the terms of the Apache License 2.0. "
