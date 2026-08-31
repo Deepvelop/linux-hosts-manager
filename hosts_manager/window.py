@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,12 +13,14 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("Pango", "1.0")
 
-from gi.repository import Adw, Gdk, Gio, Gtk, Pango
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
 from hosts_manager import __version__
 from hosts_manager.diff import format_diff_text, managed_diff
+from hosts_manager.import_dialog import ImportDialog
+from hosts_manager.importer import ImportPlan, build_imported_text, ensure_import_profile, plan_import
 from hosts_manager.merge import MergeConflict, merge_profiles
-from hosts_manager.models import HostEntry, Profile
+from hosts_manager.models import HostEntry, HostsDocument, Profile
 from hosts_manager.parser import parse
 from hosts_manager.polkit import WriteSessionError, apply_hosts, can_apply, ensure_authorized, skip_polkit
 from hosts_manager.profile_icons import PROFILE_ICONS, known_icon_ids, resolve_icon_name
@@ -107,6 +110,14 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         self._refresh_hosts()
         self._refresh_status()
         self._refresh_sync_status()
+        self._hosts_monitor: Gio.FileMonitor | None = None
+        self._import_open = False
+        self._import_document: HostsDocument | None = None
+        self._import_digest: str | None = None
+        self._last_written_hash: str | None = None
+        self._monitor_serial = 0
+        self._start_hosts_monitor()
+        GLib.idle_add(self._maybe_present_import)
 
     def _build_actions(self) -> None:
         for name, callback in (
@@ -119,6 +130,7 @@ class HostsManagerWindow(Adw.ApplicationWindow):
             ("about", self._on_about),
             ("settings", self._on_settings),
             ("apply", lambda *_: self._on_apply_clicked(None)),
+            ("import-hosts", lambda *_: self._maybe_present_import(force=True)),
         ):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", callback)
@@ -345,6 +357,7 @@ class HostsManagerWindow(Adw.ApplicationWindow):
 
     def _rebuild_menu(self) -> None:
         menu = Gio.Menu()
+        menu.append("Import Existing Hosts", "win.import-hosts")
         menu.append("Add Host", "win.add-host")
         profile = self._selected_profile()
         if profile and profile.enabled:
@@ -1062,7 +1075,132 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         self.toast_overlay.add_toast(Adw.Toast(title=success_toast))
         self._refresh_status()
         self._refresh_sync_status()
+        self._last_written_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         return True
+
+    def _start_hosts_monitor(self) -> None:
+        try:
+            directory = hosts_path_from_env().parent
+            monitor = Gio.File.new_for_path(str(directory)).monitor_directory(
+                Gio.FileMonitorFlags.NONE, None
+            )
+            monitor.connect("changed", self._on_hosts_dir_changed)
+            self._hosts_monitor = monitor
+        except Exception:
+            self._hosts_monitor = None
+
+    def _on_hosts_dir_changed(self, _monitor, file, _other, event_type) -> None:
+        if file is None:
+            return
+        if (file.get_basename() or "") != hosts_path_from_env().name:
+            return
+        if event_type in (
+            Gio.FileMonitorEvent.CHANGES_DONE_HINT,
+            Gio.FileMonitorEvent.CREATED,
+            Gio.FileMonitorEvent.DELETED,
+            Gio.FileMonitorEvent.RENAMED,
+            Gio.FileMonitorEvent.MOVED_IN,
+            Gio.FileMonitorEvent.MOVED_OUT,
+        ):
+            self._schedule_import_scan()
+
+    def _schedule_import_scan(self) -> None:
+        self._monitor_serial += 1
+        serial = self._monitor_serial
+
+        def scan() -> bool:
+            if serial != self._monitor_serial:
+                return GLib.SOURCE_REMOVE
+            self._maybe_present_import()
+            return GLib.SOURCE_REMOVE
+
+        GLib.timeout_add(400, scan)
+
+    def _maybe_present_import(self, force: bool = False) -> None:
+        if self._import_open:
+            return
+        path = hosts_path_from_env()
+        try:
+            current = path.read_text(encoding="utf-8")
+        except OSError:
+            return
+        digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
+        if not force and digest == self._last_written_hash:
+            return
+        document = parse(current)
+        plan = plan_import(document, self.profiles)
+        if not plan.entries and not plan.problems:
+            if force:
+                self.toast_overlay.add_toast(Adw.Toast(title="Nothing to import"))
+            return
+        self._import_open = True
+        self._import_document = document
+        self._import_digest = digest
+        self._last_written_hash = digest  # no re-trigger until the file changes again
+        dialog = ImportDialog(document, plan, self.profiles, self._on_import_result)
+        try:
+            dialog.connect("close-attempt", lambda *_: self._on_import_result(None))
+        except TypeError:
+            pass  # libadwaita without close-attempt: Cancel is the only exit
+        dialog.present(self)
+
+    def _on_import_result(self, final_plan: ImportPlan | None) -> None:
+        self._import_open = False
+        if final_plan is None:
+            return
+        self._apply_import(final_plan)
+
+    def _apply_import(self, plan: ImportPlan) -> None:
+        document = self._import_document
+        if document is None or self._import_digest is None:
+            return
+        path = hosts_path_from_env()
+        try:
+            current = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            self._alert("Cannot read hosts file", str(exc))
+            return
+        digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
+        if digest != self._import_digest:
+            self.toast_overlay.add_toast(Adw.Toast(title="Hosts file changed during import"))
+            self._maybe_present_import(force=True)
+            return
+        try:
+            new_text = build_imported_text(document, plan, self.profiles)
+        except (ValueError, MergeConflict) as exc:
+            self._alert("Cannot import", str(exc))
+            return
+        changes = managed_diff(document, new_text)
+        if not changes and not plan.delete_lines:
+            self.toast_overlay.add_toast(Adw.Toast(title="Nothing to import"))
+            return
+        body = (
+            format_diff_text(changes)
+            if changes
+            else f"Removes {len(plan.delete_lines)} unparsable line(s) from the hosts file."
+        )
+        dialog = Adw.AlertDialog(heading="Import changes", body=body)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("apply", "Save")
+        dialog.set_default_response("apply")
+        dialog.set_close_response("cancel")
+        dialog.set_response_appearance("apply", Adw.ResponseAppearance.SUGGESTED)
+
+        def on_response(response: str) -> None:
+            if response != "apply":
+                return
+            if self._do_write_hosts(new_text, "Imported existing hosts"):
+                self._finish_import(plan)
+
+        self._present_alert(dialog, on_response)
+
+    def _finish_import(self, plan: ImportPlan) -> None:
+        if plan.entries:
+            ensure_import_profile(self.profiles, plan.entries)
+        self._persist()
+        self._refresh_profiles()
+        self._refresh_hosts()
+        self._refresh_sync_status()
 
     def _on_about(self, *_args) -> None:
         about = Adw.AboutDialog(
