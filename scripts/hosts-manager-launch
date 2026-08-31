@@ -1,0 +1,28 @@
+#!/usr/bin/env sh
+set -eu
+
+find_app_root() {
+  if [ -n "${SNAP:-}" ] && [ -f "$SNAP/usr/share/hosts-manager/app.py" ]; then
+    printf '%s\n' "$SNAP/usr/share/hosts-manager"
+    return 0
+  fi
+  if [ -n "${FLATPAK_ID:-}" ] && [ -f /app/share/hosts-manager/app.py ]; then
+    printf '%s\n' /app/share/hosts-manager
+    return 0
+  fi
+  for root in /usr/local/share/hosts-manager /usr/share/hosts-manager; do
+    if [ -f "$root/app.py" ]; then
+      printf '%s\n' "$root"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ROOT="$(find_app_root)" || {
+  echo "hosts-manager: application files not found" >&2
+  exit 1
+}
+
+cd "$ROOT"
+exec python3 app.py "$@"

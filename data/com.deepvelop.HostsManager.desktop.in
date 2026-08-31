@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Hosts Manager
+Comment=Manage /etc/hosts with profile overlays
+Exec=@BINDIR@/hosts-manager
+TryExec=@BINDIR@/hosts-manager
+Icon=com.deepvelop.HostsManager
+Terminal=false
+Categories=Settings;
+StartupNotify=true
+Keywords=hosts;dns;network;local;
+StartupWMClass=com.deepvelop.HostsManager

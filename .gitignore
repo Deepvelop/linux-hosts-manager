@@ -1,0 +1,20 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+*.egg-info/
+
+# Local tooling caches
+graphify-out/
+.superpowers/
+
+# Snap / Flatpak packaging — kept local, not published in the repo
+flatpak/
+snap/
+flatpak-build/
+snap/.snapcraft/
+*.snap
+build-dir/

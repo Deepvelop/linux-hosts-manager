@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.deepvelop.HostsManager</id>
+  <name>Hosts Manager</name>
+  <summary>Manage /etc/hosts with profile overlays</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <description>
+    <p>
+      Hosts Manager is a native GNOME application for editing the system hosts file
+      with profile overlays. Keep separate Development, Staging, and Production
+      host lists and enable only what you need.
+    </p>
+    <p>
+      The graphical interface runs as your user account. Writes to
+      <code>/etc/hosts</code> are performed through PolicyKit and a small privileged
+      helper that validates input, creates backups, and writes atomically.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Multiple profiles with per-host enable toggles</li>
+      <li>Inline descriptions stored as comments in the managed block</li>
+      <li>Preserves unmanaged lines outside the managed block</li>
+      <li>Diff review before saving (when auto-save is off)</li>
+      <li>Optional auto-save to write hosts immediately</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">com.deepvelop.HostsManager.desktop</launchable>
+  <developer_name>Deepvelop</developer_name>
+  <url type="homepage">https://github.com/deepvelop/linux-hosts-manager</url>
+  <url type="bugtracker">https://github.com/deepvelop/linux-hosts-manager/issues</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-08-25">
+      <description>
+        <p>Initial release with profile overlays, auto-save, and GNOME 46 support.</p>
+      </description>
+    </release>
+  </releases>
+</component>
