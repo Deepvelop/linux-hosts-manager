@@ -26,6 +26,7 @@ from hosts_manager.polkit import WriteSessionError, apply_hosts, can_apply, ensu
 from hosts_manager.profile_icons import PROFILE_ICONS, known_icon_ids, resolve_icon_name
 from hosts_manager.profiles import ProfileStore
 from hosts_manager.settings import AppSettings, SettingsStore
+from hosts_manager.sync import SyncChange, SyncPlan, plan_sync
 from hosts_manager.validate import ValidationError, ip_family, validate_entry
 from hosts_manager.writer import WriteError, backup_dir_from_env, hosts_path_from_env
 
@@ -46,6 +47,12 @@ def _load_css() -> None:
         provider,
         Gtk.STYLE_PROVIDER_PRIORITY_USER,
     )
+
+
+def _sync_change_text(change: SyncChange) -> str:
+    marks = {"add": "+", "update": "~", "remove": "-"}
+    target = f"{change.ip} {change.hostname}".strip()
+    return f"{marks[change.kind]} {change.profile} — {target}"
 
 
 def _icon(name: str, size: int = 16) -> Gtk.Image:
@@ -112,12 +119,13 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         self._refresh_sync_status()
         self._hosts_monitor: Gio.FileMonitor | None = None
         self._import_open = False
+        self._sync_open = False
         self._import_document: HostsDocument | None = None
         self._import_digest: str | None = None
         self._last_written_hash: str | None = None
         self._monitor_serial = 0
         self._start_hosts_monitor()
-        GLib.idle_add(self._maybe_present_import)
+        GLib.idle_add(self._on_hosts_scan)
 
     def _build_actions(self) -> None:
         for name, callback in (
@@ -1115,7 +1123,7 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         def scan() -> bool:
             if serial != self._monitor_serial:
                 return GLib.SOURCE_REMOVE
-            self._maybe_present_import()
+            self._on_hosts_scan()
             return GLib.SOURCE_REMOVE
 
         GLib.timeout_add(400, scan)
@@ -1147,6 +1155,65 @@ class HostsManagerWindow(Adw.ApplicationWindow):
         except TypeError:
             pass  # libadwaita without close-attempt: Cancel is the only exit
         dialog.present(self)
+
+    def _on_hosts_scan(self) -> None:
+        if not self._maybe_present_sync():
+            self._maybe_present_import()
+
+    def _maybe_present_sync(self) -> bool:
+        if self._sync_open:
+            return True
+        path = hosts_path_from_env()
+        try:
+            current = path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
+        if digest == self._last_written_hash:
+            return False
+        plan = plan_sync(parse(current), self.profiles)
+        if not plan.changes:
+            return False
+        self._sync_open = True
+        body = "\n".join(_sync_change_text(change) for change in plan.changes)
+        dialog = Adw.AlertDialog(
+            heading="The hosts file changed outside the app",
+            body=body,
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("apply", "Apply")
+        dialog.set_default_response("apply")
+        dialog.set_close_response("cancel")
+        dialog.set_response_appearance("apply", Adw.ResponseAppearance.SUGGESTED)
+        try:
+            dialog.connect("close-attempt", lambda *_: self._finish_sync_choice(None))
+        except TypeError:
+            pass
+
+        def on_response(response: str) -> None:
+            self._finish_sync_choice(plan if response == "apply" else None)
+
+        self._present_alert(dialog, on_response)
+        return True
+
+    def _finish_sync_choice(self, plan: SyncPlan | None) -> None:
+        if not self._sync_open:
+            return
+        self._sync_open = False
+        if plan is not None:
+            self.profiles = plan.profiles
+            self._persist()
+            self._refresh_profiles()
+            self._refresh_hosts()
+            self._refresh_sync_status()
+            path = hosts_path_from_env()
+            try:
+                digest = hashlib.sha256(path.read_text(encoding="utf-8")).hexdigest()
+            except OSError:
+                digest = None
+            if digest:
+                self._last_written_hash = digest
+        self._maybe_present_import()
 
     def _on_import_result(self, final_plan: ImportPlan | None) -> None:
         self._import_open = False
